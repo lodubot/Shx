@@ -1,6 +1,5 @@
 import os
 import subprocess
-import re
 import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -23,35 +22,35 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_dir = os.path.abspath(f"user_data_{chat_id}")
     os.makedirs(user_dir, exist_ok=True)
     
-    await update.message.reply_text("Tmate SSH session start ho raha hai, 8 seconds wait karein...")
+    await update.message.reply_text("Tmate SSH session start ho raha hai, wait karein...")
     
     try:
-        log_file = f"tmate_{chat_id}.log"
-        log_path = os.path.join(user_dir, log_file)
+        socket_path = os.path.join(user_dir, "tmate.sock")
         
-        if os.path.exists(log_path):
-            os.remove(log_path)
-            
-        subprocess.run(f"pkill -f 'tmate.*user_data_{chat_id}'", shell=True)
+        # Purana session kill karein agar chal raha ho
+        subprocess.run(f"tmate -S {socket_path} kill-session", shell=True)
         
-        # Tmate start karna with nohup
-        cmd = f"cd {user_dir} && nohup tmate > {log_file} 2>&1 &"
-        subprocess.run(cmd, shell=True)
+        # Socket ke sath naya detached session start karein
+        start_cmd = f"tmate -S {socket_path} new-session -d"
+        subprocess.run(start_cmd, shell=True)
         
-        # Connection establish hone ke liye 8 seconds ka wait
-        time.sleep(8)
+        # Tmate ke cloud par connect hone ka intezaar karein
+        subprocess.run(f"tmate -S {socket_path} wait tmate-ready", shell=True)
         
-        ssh_command = "SSH connection string nahi mili. Dobara /link try karein."
+        # Thoda sa buffer time
+        time.sleep(1)
         
-        if os.path.exists(log_path):
-            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-                clean_content = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', content)
-                
-                # Tmate ki ssh command dhoondhna
-                match = re.search(r'ssh\s+[^\s]+@[^\s]+', clean_content)
-                if match:
-                    ssh_command = match.group(0)
+        # Socket se direct SSH connection string nikalna (Python f-string ke liye double brackets {{ }} use kiye hain)
+        res = subprocess.run(f"tmate -S {socket_path} display -p '#{{tmate_ssh}}'", shell=True, capture_output=True, text=True)
+        ssh_command = res.stdout.strip()
+        
+        # Agar main link na mile toh read-only link try karein
+        if not ssh_command or "no session" in ssh_command.lower():
+            res2 = subprocess.run(f"tmate -S {socket_path} display -p '#{{tmate_ssh_ro}}'", shell=True, capture_output=True, text=True)
+            ssh_command = res2.stdout.strip()
+
+        if not ssh_command or len(ssh_command) < 10:
+            ssh_command = "Connection string nahi mili. Dobara /link try karein."
         
         await update.message.reply_text(
             f"💻 **Termux / Termius ke liye SSH Command:**\n\n`{ssh_command}`\n\n"
@@ -63,14 +62,10 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def delete_vps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_dir = os.path.abspath(f"user_data_{chat_id}")
+    socket_path = os.path.join(user_dir, "tmate.sock")
     
     try:
-        subprocess.run(f"pkill -f 'tmate.*user_data_{chat_id}'", shell=True)
-        log_file = f"tmate_{chat_id}.log"
-        log_path = os.path.join(user_dir, log_file)
-        if os.path.exists(log_path):
-            os.remove(log_path)
-            
+        subprocess.run(f"tmate -S {socket_path} kill-session", shell=True)
         await update.message.reply_text("❌ Aapka tmate session terminate kar diya gaya hai.")
     except Exception as e:
         await update.message.reply_text(f"Error: {e}")
