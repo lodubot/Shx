@@ -1,6 +1,5 @@
 import os
 import subprocess
-import re
 import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -23,37 +22,35 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_dir = os.path.abspath(f"user_data_{chat_id}")
     os.makedirs(user_dir, exist_ok=True)
     
-    await update.message.reply_text("Tmate SSH session start ho raha hai, 4 seconds wait karein...")
+    await update.message.reply_text("Tmate SSH session connect ho raha hai, thoda wait karein...")
     
     try:
-        log_file = f"tmate_{chat_id}.log"
-        log_path = os.path.join(user_dir, log_file)
+        socket_path = os.path.join(user_dir, "tmate.sock")
         
-        # Purani log file delete karein
-        if os.path.exists(log_path):
-            os.remove(log_path)
-            
-        # Purana tmate process band karein agar chal raha ho
-        subprocess.run(f"pkill -f 'tmate.*user_data_{chat_id}'", shell=True)
+        # Purana session kill karein agar chal raha ho toh
+        subprocess.run(f"tmate -S {socket_path} kill-session", shell=True)
         
-        # Tmate ko background mein chala kar output log file mein save karna
-        cmd = f"cd {user_dir} && nohup tmate -F > {log_file} 2>&1 &"
-        subprocess.run(cmd, shell=True)
+        # Naya background session start karein
+        start_cmd = f"cd {user_dir} && tmate -S {socket_path} new-session -d"
+        subprocess.run(start_cmd, shell=True)
         
-        # Connection string generate hone ke liye 4 seconds wait
-        time.sleep(4)
+        # Tmate ke cloud par connect hone ka intezaar karein (Yeh command tab tak roke rakhegi jab tak session ready na ho)
+        subprocess.run(f"tmate -S {socket_path} wait tmate-ready", shell=True)
         
-        ssh_command = "SSH connection string nahi mili. Dobara /link try karein."
+        # Thoda sa safety buffer time
+        time.sleep(1)
         
-        if os.path.exists(log_path):
-            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-                clean_content = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', content)
-                
-                # Tmate ki 'ssh session@...' wali line dhoondhna
-                match = re.search(r'ssh\s+[^\s]+@[^\s]+', clean_content)
-                if match:
-                    ssh_command = match.group(0)
+        # SSH command nikalna (Python formatting conflict se bachne ke liye double brackets {{ }} ka use kiya hai)
+        res = subprocess.run(f"tmate -S {socket_path} display -p '#{{tmate_ssh}}'", shell=True, capture_output=True, text=True)
+        ssh_command = res.stdout.strip()
+        
+        # Agar main link na mile toh read-only link try karein
+        if not ssh_command or "no session" in ssh_command.lower():
+            res2 = subprocess.run(f"tmate -S {socket_path} display -p '#{{tmate_ssh_ro}}'", shell=True, capture_output=True, text=True)
+            ssh_command = res2.stdout.strip()
+
+        if not ssh_command or len(ssh_command) < 10:
+            ssh_command = "Connection string nahi mili. Dobara /link try karein."
         
         await update.message.reply_text(
             f"💻 **Termux / Termius ke liye SSH Command:**\n\n`{ssh_command}`\n\n"
@@ -65,14 +62,10 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def delete_vps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_dir = os.path.abspath(f"user_data_{chat_id}")
+    socket_path = os.path.join(user_dir, "tmate.sock")
     
     try:
-        subprocess.run(f"pkill -f 'tmate.*user_data_{chat_id}'", shell=True)
-        log_file = f"tmate_{chat_id}.log"
-        log_path = os.path.join(user_dir, log_file)
-        if os.path.exists(log_path):
-            os.remove(log_path)
-            
+        subprocess.run(f"tmate -S {socket_path} kill-session", shell=True)
         await update.message.reply_text("❌ Aapka tmate session terminate kar diya gaya hai.")
     except Exception as e:
         await update.message.reply_text(f"Error: {e}")
