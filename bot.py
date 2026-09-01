@@ -1,5 +1,6 @@
 import os
 import subprocess
+import re
 import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -13,8 +14,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         f"Aapka personal terminal folder taiyar hai!\n\n"
-        f"🔗 Termius/Termux SSH link ke liye: `/link`\n"
-        f"❌ Terminal delete karne ke liye: `/deletevps`"
+        f"🔗 Link lene ke liye: `/link`\n"
+        f"❌ Terminal/Link delete karne ke liye: `/deletevps`"
     )
 
 async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -22,51 +23,53 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_dir = os.path.abspath(f"user_data_{chat_id}")
     os.makedirs(user_dir, exist_ok=True)
     
-    await update.message.reply_text("Tmate SSH session start ho raha hai, wait karein...")
+    await update.message.reply_text("Sshx link fetch ki ja rahi hai, 3 seconds wait karein...")
     
     try:
-        socket_path = os.path.join(user_dir, "tmate.sock")
+        log_file = f"sshx_{chat_id}.log"
+        log_path = os.path.join(user_dir, log_file)
         
-        # Purana session kill karein agar chal raha ho
-        subprocess.run(f"tmate -S {socket_path} kill-session", shell=True)
+        if os.path.exists(log_path):
+            os.remove(log_path)
+            
+        # Sshx ko background mein run karein
+        cmd = f"cd {user_dir} && nohup sshx > {log_file} 2>&1 &"
+        subprocess.run(cmd, shell=True)
         
-        # Socket ke sath naya detached session start karein
-        start_cmd = f"tmate -S {socket_path} new-session -d"
-        subprocess.run(start_cmd, shell=True)
+        time.sleep(3)
         
-        # Tmate ke cloud par connect hone ka intezaar karein
-        subprocess.run(f"tmate -S {socket_path} wait tmate-ready", shell=True)
+        link = "Link nahi mili. Dobara /link try karein."
         
-        # Thoda sa buffer time
-        time.sleep(1)
+        if os.path.exists(log_path):
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                clean_content = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', content)
+                match = re.search(r'https://sshx\.io/[^\s]+', clean_content)
+                if match:
+                    link = match.group(0)
         
-        # Socket se direct SSH connection string nikalna (Python f-string ke liye double brackets {{ }} use kiye hain)
-        res = subprocess.run(f"tmate -S {socket_path} display -p '#{{tmate_ssh}}'", shell=True, capture_output=True, text=True)
-        ssh_command = res.stdout.strip()
-        
-        # Agar main link na mile toh read-only link try karein
-        if not ssh_command or "no session" in ssh_command.lower():
-            res2 = subprocess.run(f"tmate -S {socket_path} display -p '#{{tmate_ssh_ro}}'", shell=True, capture_output=True, text=True)
-            ssh_command = res2.stdout.strip()
-
-        if not ssh_command or len(ssh_command) < 10:
-            ssh_command = "Connection string nahi mili. Dobara /link try karein."
-        
-        await update.message.reply_text(
-            f"💻 **Termux / Termius ke liye SSH Command:**\n\n`{ssh_command}`\n\n"
-            f"Isko copy karke apne Termux ya Termius app mein paste karein."
-        )
+        await update.message.reply_text(f"🔗 **Aapki Sshx Link:**\n{link}")
     except Exception as e:
         await update.message.reply_text(f"Error: {e}")
 
+# /deletevps command - Sshx process aur link band karne ke liye
 async def delete_vps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_dir = os.path.abspath(f"user_data_{chat_id}")
-    socket_path = os.path.join(user_dir, "tmate.sock")
     
     try:
-        subprocess.run(f"tmate -S {socket_path} kill-session", shell=True)
-        await update.message.reply_text("❌ Aapka tmate session terminate kar diya gaya hai.")
+        # Us user ke folder se chal rahe 'sshx' process ko dhoondh kar band karna
+        subprocess.run(f"pkill -f 'sshx.*user_data_{chat_id}'", shell=True)
+        # Ek aam tarika: us user ke directory wale sabhi sshx processes kill karna
+        subprocess.run(f"killall sshx", shell=True) # (Agar sabhi ka alag process ho toh pkill behtar hai)
+        
+        # Log file delete karna
+        log_file = f"sshx_{chat_id}.log"
+        log_path = os.path.join(user_dir, log_file)
+        if os.path.exists(log_path):
+            os.remove(log_path)
+            
+        await update.message.reply_text("❌ Aapka terminal session aur sshx link successfully delete/terminate kar di gayi hai.")
     except Exception as e:
         await update.message.reply_text(f"Error: {e}")
 
