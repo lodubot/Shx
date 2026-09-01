@@ -23,35 +23,32 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_dir = os.path.abspath(f"user_data_{chat_id}")
     os.makedirs(user_dir, exist_ok=True)
     
-    await update.message.reply_text("Tmate SSH session start ho raha hai, 5 seconds wait karein...")
+    await update.message.reply_text("Tmate SSH session start ho raha hai, 8 seconds wait karein...")
     
     try:
         log_file = f"tmate_{chat_id}.log"
         log_path = os.path.join(user_dir, log_file)
         
-        # Purani log file delete karein agar ho toh
         if os.path.exists(log_path):
             os.remove(log_path)
             
-        # Purana tmate process band karein agar chal raha ho
         subprocess.run(f"pkill -f 'tmate.*user_data_{chat_id}'", shell=True)
         
-        # Tmate ko background mein chala kar output log file mein save karna
+        # Tmate start karna with nohup
         cmd = f"cd {user_dir} && nohup tmate > {log_file} 2>&1 &"
         subprocess.run(cmd, shell=True)
         
-        # Connection string generate hone ke liye 5 seconds wait
-        time.sleep(5)
+        # Connection establish hone ke liye 8 seconds ka wait
+        time.sleep(8)
         
         ssh_command = "SSH connection string nahi mili. Dobara /link try karein."
         
         if os.path.exists(log_path):
             with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-                # ANSI color codes clean karna
                 clean_content = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', content)
                 
-                # Tmate ki 'ssh session@...' wali line dhoondhna
+                # Tmate ki ssh command dhoondhna
                 match = re.search(r'ssh\s+[^\s]+@[^\s]+', clean_content)
                 if match:
                     ssh_command = match.group(0)
